@@ -7,7 +7,6 @@ editor_options:
 
 # SICSS Norrköping 2023: Text Analysis (SOLUTIONS)
 
-#HE: Add your own info here as well, it's not just me anymore :)
 _Hendrik Erz, Institute for Analytical Sociology | <hendrik.erz@liu.se> | Twitter: @sahiralsaid_
 
 _Maël Lecoursonnais, Institute for Analytical Sociology | <mael.lecoursonnais@liu.se> | Twitter: @M_Lecoursonnais_
@@ -83,15 +82,15 @@ speeches(n_speeches = 2)
 
 ## Preliminaries: Installing the necessary packages
 
-This workbook relies on a set of packages. Depending on what package manager you use, there are various ways to install them (e.g., with Conda, pip, or virtualenv).
+This workbook relies on a set of packages. Make sure to install them according to how you have set up R.
 
-Make sure to install them according to how you have set up Python. If you use plain `pip`, here is how you can install them:
-
-#HE: This needs to also be translated, or, if all will have RStudio prompt them to install those packages, entirely remove it
-```{r}
-# Just provide the barrage of install.packages and load the libraries only when needed
-# install.packages("pacman")
-pacman::p_load(tidyverse, tidytext, stopwords, topicmodels, word2vec, broom)
+```r
+install.packages("tidyverse")
+install.packages("tidytext")
+install.packages("topicmodels")
+install.packages("word2vec")
+install.packages("broom")
+install.packages("stopwords")
 ```
 
 ## Getting to Know the Corpus
@@ -108,7 +107,7 @@ Getting to some word counts involves a few steps:
 
 Below, write a function that takes a single speech and returns a list of tokens. You should remove digits, punctuation marks, and other symbols that do not comprise regular, English words. Also, ensure that capitalization of letters does not matter by transforming the speech into lower case first.
 
-> TIP: The tidytext package offers a lot of useful functions for working with natural language. It includes functions to remove stopwords, tokenize a text, create a document-term matrix. 
+> TIP: The `tidytext` package offers a lot of useful functions for working with natural language. It includes functions to remove stopwords, tokenize a text, create a document-term matrix. 
 
 ```{r}
 #Create a dictionary of stopwords
@@ -123,9 +122,8 @@ tokenize_speech <- function(.data, col = speech){
     #Tokenize + lowercase. check ?unnest_tokens for the syntax
     unnest_tokens(tokens, {{col}}, to_lower = TRUE) |>
     
-    # TODO: Remove also words containing digits
     #Remove stopwords and words containing digits
-    filter(!tokens %in% stops, !grepl("\\d", tokens))
+    filter(!tokens %in% stops, !grepl("[^A-Za-z']", tokens))
 }
 ```
 
@@ -133,6 +131,10 @@ tokenize_speech <- function(.data, col = speech){
 # Run this cell to see how the preprocessor processes the first speech.
 speeches(2) |>
   tokenize_speech(speech)
+
+tokenized_speeches <- 
+  speeches() |> 
+  tokenize_speech()
 ```
 
 ### Exercise 2: Build a Vocabulary
@@ -224,15 +226,13 @@ count_words <- function(.data, ...){
 ```{r}
 # Let us now look at the ten most common, and then ten least common words:
 words <- 
-  speeches() |>
-  tokenize_speech() |>
+  tokenized_speeches |>
   count_words(tokens)
 
-print("Most common words:")
+#Most common words
 print(head(arrange(words, -n), 10))
 
-print("")
-print("Least common words:")
+#Least common words
 print(head(arrange(words, n), 10))
 ```
 
@@ -292,19 +292,12 @@ Below, write a function that calculates tf-idf scores for our corpus and then ou
 
 > The library `tidytext` has a useful function for that called `bind_tf_idf`. You will need to pass it the vocabulary and the speeches.
 
-
 ```{r}
 tokens_df <- 
-  speeches() |>
-  tokenize_speech() |>
+  tokenized_speeches |>
   count_words(tokens, id)
 
-calculate_tf_idf <- function(.data, term = tokens, document = id, n = n){
-  .data |>
-    bind_tf_idf({{term}}, {{document}}, {{n}})
-}
-
-tf <- calculate_tf_idf(tokens_df)
+tf <- bind_tf_idf(tokens_df, term = tokens, document = id, n = n)
 ```
 
 ### Exercise 5: Analysis of tf-idf scores
@@ -342,8 +335,12 @@ With the `tokenize_speech()` function from above, we already have a function tha
 Below, write a function that creates a DTM. We have already provided a matrix that is set to all zeros and can be fed into the LDA function. Check out `tidytext::cast_dtm` function!
 
 ```{r}
-#HE: This looks like a lot of code - the question is if we want to show it to people or if it confuses them more? Especially since DTMs are the one thing R is insanely nice to us with
-#Without additional package
+#One function fits all
+dtm <- cast_dtm(tokens_df, id, tokens, n)
+```
+
+```{r}
+#Just for fun -- Without additional package
 # Takes a tokens - id long data.frame as input (`words`)
 build_dtm_from_scratch <- function(.data, document = "id", term = "tokens"){
   
@@ -366,14 +363,9 @@ dtm_scratch <- build_dtm_from_scratch(words %>% filter(id %in% 1:4))
 dtm_scratch[1:4, 1:4]
 ```
 
-```{r}
-#One function fits all
-dtm <- cast_dtm(tokens_df, id, tokens, n)
-```
-
 ### Exercise 7: Run the Topic model
 
-Below, write a function that trains a topic model. I have already added the correct function import for you. One thing that you will need to do, however, is figure out three hyperparameters: K, alpha, and beta.
+Below, write a function that trains a topic model. I have already added the correct function import for you. One thing that you will need to do, however, is figure out three hyperparameters: K, alpha, (and beta -- not available in R).
 
 Since we are dealing with a small corpus, let us just set $K = 10$. However, you still need to figure out a good alpha and a good beta. Beta should normally be larger than alpha, and both should be smaller than 0.5. Feel free to run the model several times while doing exercise 6 to figure out good values.
 
@@ -386,9 +378,7 @@ fit_lda_model <-
     K = 10
     alpha = 0.001 
     
-    #Beta might not be available in R
-    #HE: Might? Or is it not at all? I can't check because somehow R complains when I try to compile the topicmodels package, so I can't check the docs
-    #beta = 0.01
+    #Beta is not available in topicmodels's LDA function
     
     lda_model <- LDA(
       x = dtm, 
@@ -409,12 +399,14 @@ lda <- fit_lda_model(dtm)
 
 The last step in this exercise is to analyse the topic model. The most common method is to simply output the most important words (here, let us use 10 words) for each topic and see if you can make out any semantic topics.
 
-#HE: Again Python stuff, please adapt
 > Below, write a function that prints the ten most important words for each topic. Try to think of fitting topic labels. What topic do the words seem to focus on? TIP: In order to sort the words correctly, you can first `tidy` the output with `broom::tidy` and use `slice_max` to access the top 10 words per topic.
 
 ```{r}
 print_top_words <- function(){
+  #Tidy the topic model output
   broom::tidy(lda) |>
+    
+    #Gets the top 10 values for column beta by topic (needs dplyr 1.1.0)
     slice_max(beta, n = 10, by = topic)
 }
 
@@ -426,28 +418,25 @@ print_top_words() |>
 
 The most advanced NLP method we will cover today is a Word2Vec model. Such a model encodes co-occurrence patterns of words in so-called word embeddings, vectors of numbers with 50, 100, 200, or 300 dimensions.
 
-#HE: Here is again gensim library, instead of the R one
 Here, you will write the least code since we will be using the `word2vec` library to run Word2Vec. Despite it being the (mathematically) most complex model, it can be run very fast and efficiently.
 
 ### Exercise 9: Run Word2Vec
 
-#HE: ditto
 Below, write code that uses `word2vec` and run it on our corpus.
 
-Train two models, one with a `window size` of 5, and one with 30.
+Train two models, one with a window size of 5, and one with 30.
 
 ```{r}
 library(word2vec)
 
-tokenized_speeches <- 
-  speeches() |> 
-  tokenize_speech() |>
+w2v_data <- 
+  tokenized_speeches |>
   summarise(tokens = paste(tokens, collapse = " "), .by = id) |>
   getElement("tokens")
 
 #word2vec accepts a character vector as input.
-w2v_5 = word2vec(tokenized_speeches, window = 5)
-w2v_30 = word2vec(tokenized_speeches, window = 30)
+w2v_5 = word2vec(w2v_data, window = 5)
+w2v_30 = word2vec(w2v_data, window = 30)
 
 #HE: That's a nice addition, very cool!
 # write.word2vec(w2v_5, "w2v_5.bin") # save model
@@ -461,12 +450,14 @@ As a last exercise for today, here we analyze the word embeddings. Word embeddin
 > Below, print out the most similar words for `america`, `government`, `bank`, and `war` for both models.
 
 ```{r}
+#Create the vectors of words you wanna look for
 words <- c("america", "government", "bank", "war")
-predict(w2v_5, newdata = words, type = "nearest")
 
+#5 dimensions model
+predict(w2v_5, newdata = words, type = "nearest")
+#10 dimensions model
 predict(w2v_30, newdata = words, type = "nearest")
 ```
-
 
 ## Conclusion
 
@@ -474,6 +465,6 @@ This concludes today's introduction into text analysis methods. Notice how we pr
 
 Regardless of whether you have used the provided corpus, or your own: Try to come up with some research questions over the afternoon that you could check. Maybe this leads to a great project idea?
 
-#HE: Add your own info here as well! :)
 If you have further questions regarding these methods, do not hesitate to send me a mail to <hendrik.erz@liu.se> or ping me on Twitter <https://twitter.com/sahiralsaid>!
 
+And for the R side of it, it's over there: <mael.lecoursonnais@liu.se>. 
