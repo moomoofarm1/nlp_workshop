@@ -1,6 +1,6 @@
-# NLP Workshop
+# SICSS-IAS 2023: Computational Text Analysis
 
-This repository contains code for the NLP Workshop.
+This repository contains code for the Computational Text Analysis Workshop at SICSS-IAS.
 
 ## License
 
