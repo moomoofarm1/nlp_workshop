@@ -1,0 +1,479 @@
+---
+title: An R Markdown document converted from "workshop-nlp/NLP_Workshop_solutions.ipynb"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+# SICSS Norrköping 2023: Text Analysis (SOLUTIONS)
+
+#HE: Add your own info here as well, it's not just me anymore :)
+_Hendrik Erz, Institute for Analytical Sociology | <hendrik.erz@liu.se> | Twitter: @sahiralsaid_
+
+_Maël Lecoursonnais, Institute for Analytical Sociology | <mael.lecoursonnais@liu.se> | Twitter: @M_Lecoursonnais_
+
+Welcome to the practical part of the Text Analaysis day! In this notebook, you will try out some of the methods covered in the morning lecture. In particular, the methods covered will be:
+
+* tf-idf scores
+* topic modeling
+* Word2Vec
+
+Below, you will see several exercises that cover most of the steps from an unprocessed text corpus to a final trained model, and, lastly the analysis step.
+
+You will work on these examples in smaller groups with guidance from me.
+
+## Preliminaries: Loading the Corpus
+
+Your task in this exercise is to write a function that will return parts of the corpus in a way that the models we are using works with. Here, we will be working with a corpus of the **[States of the Union (SOTU)](https://en.wikipedia.org/wiki/State_of_the_Union) of the U.S. presidents**.
+
+***
+
+The first step is always to load the corpus. We will use a **generator** for this, since a generator helps us keep the memory footprint small and therefore to keep the model training times low.
+
+Normally, you would have the corpus downloaded to your computer, but since we're on a Google Colab, we'll have to retrieve it from the web first. Since I provide the corpus, below you can find a ready-made function that will automatically return the corpus in the following format:
+
+```r
+corpus = data.frame(
+    c('This is a speech from a republican', 'This is a speech from a democrat'),
+    c('R', 'D'),
+    # ...
+)
+```
+
+As you can see, you will get from this generator function a list of **tuples**. The first element is always a speech, the second element is a letter indicating the president's party. The party codes are as follows:
+
+* R: Republican
+* D: Democrat
+* W: Whig
+* F: Federalist
+* DR: Democratic-Republican
+* na: No party
+* NU: National Union
+
+***
+
+**Whenever you need the speeches, just call `speeches()` in your code**
+
+```{r}
+speeches <- function(n_speeches = 251){
+  
+  #Open a connection with the file. (Check the path)
+  fp <- file("sotu.csv", "r", encoding = "UTF-8")
+  
+  #Read speeches, up until n_speeches. If n = 2, it'll read the first two speeches.
+  speech <- readLines(fp, n = n_speeches)
+  close(fp) #Close the connection
+  
+  #Separate the speech in two parts: the speech and the political party
+  speech_split <- strsplit(speech, "\t")
+  
+  #Create the data.frame
+  data.frame(
+    id = seq(n_speeches),
+    speech = sapply(speech_split, `[`, 1),
+    party = sapply(speech_split, `[`, 2)
+    )
+}
+
+#Get the first two speeches
+  #Note: By default, n_speeches is 251 (the total number of speeches).
+  #So, running speeches() with no parameter will outputs every speeches.
+speeches(n_speeches = 2)
+```
+
+## Preliminaries: Installing the necessary packages
+
+This workbook relies on a set of packages. Depending on what package manager you use, there are various ways to install them (e.g., with Conda, pip, or virtualenv).
+
+Make sure to install them according to how you have set up Python. If you use plain `pip`, here is how you can install them:
+
+#HE: This needs to also be translated, or, if all will have RStudio prompt them to install those packages, entirely remove it
+```{r}
+# Just provide the barrage of install.packages and load the libraries only when needed
+# install.packages("pacman")
+pacman::p_load(tidyverse, tidytext, stopwords, topicmodels, word2vec, broom)
+```
+
+## Getting to Know the Corpus
+
+Before we dive into the corpus, we should make sure we have some bearings in the corpus. For this, a very simple method is to simply start counting words. This is not necessarily the most informative method, but it will give us some data that we can use to make some sense of the corpus.
+
+Getting to some word counts involves a few steps:
+
+1. First, we need a **tokenizer** that can split up a speech into tokens.
+2. After we have a method of splitting a document into its constituent words, we can use this information to build a vocabulary.
+3. We can count words to ensure our corpus looks as it should.
+
+### Exercise 1: Write a text tokenizer
+
+Below, write a function that takes a single speech and returns a list of tokens. You should remove digits, punctuation marks, and other symbols that do not comprise regular, English words. Also, ensure that capitalization of letters does not matter by transforming the speech into lower case first.
+
+> TIP: The tidytext package offers a lot of useful functions for working with natural language. It includes functions to remove stopwords, tokenize a text, create a document-term matrix. 
+
+```{r}
+#Create a dictionary of stopwords
+stops <- stopwords::stopwords()
+
+#Create the function
+tokenize_speech <- function(.data, col = speech){
+  
+  #|> is the base R pipe. It is equivalent to %>%.
+  .data |>
+    
+    #Tokenize + lowercase. check ?unnest_tokens for the syntax
+    unnest_tokens(tokens, {{col}}, to_lower = TRUE) |>
+    
+    # TODO: Remove also words containing digits
+    #Remove stopwords and words containing digits
+    filter(!tokens %in% stops, !grepl("\\d", tokens))
+}
+```
+
+```{r}
+# Run this cell to see how the preprocessor processes the first speech.
+speeches(2) |>
+  tokenize_speech(speech)
+```
+
+### Exercise 2: Build a Vocabulary
+
+We will need a vocabulary for many of the following steps, so it makes sense to write a dedicated function for it. The easiest form of a vocabulary is a dictionary that maps words to indices:
+
+```r
+vocab <- c(
+    'word1' = 0,
+    'word2' = 1,
+    # ...
+)
+```
+
+Since we also need to figure out words by their indices after running some of our methods, we should create a so-called `i2w`-dictionary. The `i2w` ("index to word") performs the reverse lookup and maps indices to words:
+
+```r
+i2w <- c(
+    0 = 'word',
+    1 = 'word2',
+    # ...
+)
+```
+
+We can then use these dictionaries to retrieve indices or words, depending on what we need:
+
+```r
+vocab['president']
+# > May yield '24'
+
+i2w[24]
+# > May yield 'president'
+```
+
+Below, write a function that returns both a vocab and an i2w.
+
+```{r}
+build_i2w <- function(.data, col = tokens){
+  # First generate the index -> word mapping
+  .data |>
+    pull({{col}}) |>
+    unique()
+}
+
+build_vocab <- function(i = i2w){
+  # Now reverse it (important later), i.e. word -> index mapping.
+  setNames(seq_along(i), i)
+}
+```
+
+```{r}
+# Run this cell to create the vocabulary
+i2w <- 
+  speeches(2) |>
+  tokenize_speech() |>
+  build_i2w()
+
+# Look at the 69th word
+i2w[69]
+
+vocab <- build_vocab(i2w)
+
+# Look at the index of the word "congress"
+vocab["congress"]
+```
+
+```{r}
+# Let us have a first look at the first ten words in our vocabulary. Note how
+# the first ten words in our vocab equal the first words of the first speech
+# (sans stopwords or numbers).
+i2w[1:10]
+```
+
+### Exercise 3: Count words
+
+The final introductory exercise involves counting words. `dplyr` luckily has a useful function for us: `count`.
+
+```{r}
+# Below, write a function that can count the words and returns a list of words
+# and their frequencies.
+
+count_words <- function(.data, ...){
+  .data |>
+    dplyr::count(..., sort = TRUE)
+}
+```
+
+
+```{r}
+# Let us now look at the ten most common, and then ten least common words:
+words <- 
+  speeches() |>
+  tokenize_speech() |>
+  count_words(tokens)
+
+print("Most common words:")
+print(head(arrange(words, -n), 10))
+
+print("")
+print("Least common words:")
+print(head(arrange(words, n), 10))
+```
+
+
+### Verify Zipf's Law
+
+One great way of ensuring that your corpus does not include oddities and spurious data, a very simple verification involves checking for Zipf's law: The fact that a few words are very common, and many words are relatively uncommon. A histogram of words should resemple a logarithmic function.
+
+Below, plot the frequencies ordered by rank.
+
+```{r}
+library(ggplot2)
+
+words_plot <- data.frame(n = words[order(-words$n), "n"])
+
+ggplot(data = words_plot) +
+  aes(x = seq_along(n), y = n) +
+  geom_line() +
+  scale_y_log10(labels = scales::label_log()) +
+  labs(x = "Rank", y = "Frequency", title = "Zipf's Law: State of the Union Corpus") +
+  theme_bw()
+```
+
+## Computing tf-idf scores
+
+The most simple way to begin an analysis is by calculating tf-idf scores. You can do this "manually", but for practical usage, there are some libraries that already do that for you.
+
+Calculating tf-idf scores consists of three steps:
+
+1. Calculate the term frequencies of words within each document
+2. Calculate the inverse document frequency for each word
+3. For each word in each document, calculate tf-idf by multiplying the document-specific frequency with the word's IDF-score
+
+Remember, tf-idf is defined as:
+
+$$
+{\displaystyle \text{tf-idf} (t, d, D) = \mathrm{tf} (t,d) \times \mathrm{idf}}(t, D)
+$$
+
+where
+
+$$
+{\displaystyle \mathrm {tf} (t,d)={\frac {f_{t,d}}{\sum _{t'\in d}{f_{t',d}}}}}
+$$
+
+with $t$ = the term in question, $t'$ = all other terms, and $f_t$ = the (document)relative frequency of the term. And:
+
+$$
+ \mathrm{idf}(t, D) =  \log \frac{N}{1 + D}
+$$
+
+with $N$ = total number of documents in the corpus and $D$ = number of documents that contain term $t$.
+
+### Exercise 4: Calculate tf-idf scores
+
+Below, write a function that calculates tf-idf scores for our corpus and then outputs the most relevant word for each speech.
+
+> The library `tidytext` has a useful function for that called `bind_tf_idf`. You will need to pass it the vocabulary and the speeches.
+
+
+```{r}
+tokens_df <- 
+  speeches() |>
+  tokenize_speech() |>
+  count_words(tokens, id)
+
+calculate_tf_idf <- function(.data, term = tokens, document = id, n = n){
+  .data |>
+    bind_tf_idf({{term}}, {{document}}, {{n}})
+}
+
+tf <- calculate_tf_idf(tokens_df)
+```
+
+### Exercise 5: Analysis of tf-idf scores
+
+Now that we have calculated tf-idf scores, it is time to have a look at them. Below, write code to print out the highest scoring word for each speech, as well as, afterwards, the lowest-scoring word.
+
+Explain what makes the words important or unimportant, and what this means in the context of the SOTU corpus.
+
+```{r}
+tf %>% 
+  arrange(id, -tf_idf)
+
+#Most important words for the first speech:
+subset(tf[order(tf$tf_idf, decreasing = TRUE), ], id == 1) 
+
+#Least important words for the first speech:
+subset(tf[order(tf$tf_idf), ], id == 1) 
+```
+
+## Running a Topic Model
+
+#HE: Again, in this text there are some references to Pythonic functions that we need to update to R
+The next step to see what is inside our corpus is to run a topic model. The most common model is Latent Dirichlet Allocation (LDA). The library `topicmodels` provides such a model. 
+
+Running an LDA model requires a so-called Document-Term Matrix (DTM). In it, documents are defined as "one hot"-vectors. The matrix has the shape `(number of documents, number of words)`, and each cell is set to `0` if the document does not contain the word, and `1` if it does.
+
+With the `tokenize_speech()` function from above, we already have a function that splits speeches into tokens. We now just need to build the DTM based on that. Building a DTM consists normally of these steps:
+
+1. Create a vocabulary that contains every token within the whole corpus
+2. Optionally, remove the most often occurring and the least often occurring terms to reduce the amount of words
+3. Go over the corpus and set the corresponding cells in the matrix to `1`, if the document contains a word in the vocabulary.
+
+### Exercise 6: Build a DTM
+
+Below, write a function that creates a DTM. We have already provided a matrix that is set to all zeros and can be fed into the LDA function. Check out `tidytext::cast_dtm` function!
+
+```{r}
+#HE: This looks like a lot of code - the question is if we want to show it to people or if it confuses them more? Especially since DTMs are the one thing R is insanely nice to us with
+#Without additional package
+# Takes a tokens - id long data.frame as input (`words`)
+build_dtm_from_scratch <- function(.data, document = "id", term = "tokens"){
+  
+  documents = unique(.data[[document]])
+  tokens = sort(unique(.data[[term]]))
+  
+  #Initialize matrix
+  dim = c(length(documents), length(tokens))
+  dtm = array(0, dim = dim, dimnames = list(documents, tokens))
+  
+  for (i in tokens){
+    dtm[, i] <- tapply(.data[[term]], .data[[document]], FUN = \(x) +(any(x == i)))
+  }
+  
+  dtm
+}
+
+#Try with 4 documents: already long!! Not optimized at all.
+dtm_scratch <- build_dtm_from_scratch(words %>% filter(id %in% 1:4))
+dtm_scratch[1:4, 1:4]
+```
+
+```{r}
+#One function fits all
+dtm <- cast_dtm(tokens_df, id, tokens, n)
+```
+
+### Exercise 7: Run the Topic model
+
+Below, write a function that trains a topic model. I have already added the correct function import for you. One thing that you will need to do, however, is figure out three hyperparameters: K, alpha, and beta.
+
+Since we are dealing with a small corpus, let us just set $K = 10$. However, you still need to figure out a good alpha and a good beta. Beta should normally be larger than alpha, and both should be smaller than 0.5. Feel free to run the model several times while doing exercise 6 to figure out good values.
+
+```{r}
+library(topicmodels)
+
+fit_lda_model <- 
+  function(dtm){
+    # First, present the hyperparameters for the model.
+    K = 10
+    alpha = 0.001 
+    
+    #Beta might not be available in R
+    #HE: Might? Or is it not at all? I can't check because somehow R complains when I try to compile the topicmodels package, so I can't check the docs
+    #beta = 0.01
+    
+    lda_model <- LDA(
+      x = dtm, 
+      k = K, 
+      method = "Gibbs",
+      control = list(iter = 50, seed = 1, alpha = alpha))
+    
+    lda_model
+  }
+```
+
+```{r}
+#Fit a model
+lda <- fit_lda_model(dtm)
+```
+
+### Exercise 8: Analyze the topic model
+
+The last step in this exercise is to analyse the topic model. The most common method is to simply output the most important words (here, let us use 10 words) for each topic and see if you can make out any semantic topics.
+
+#HE: Again Python stuff, please adapt
+> Below, write a function that prints the ten most important words for each topic. Try to think of fitting topic labels. What topic do the words seem to focus on? TIP: In order to sort the words correctly, you can first `tidy` the output with `broom::tidy` and use `slice_max` to access the top 10 words per topic.
+
+```{r}
+print_top_words <- function(){
+  broom::tidy(lda) |>
+    slice_max(beta, n = 10, by = topic)
+}
+
+print_top_words() |>
+  group_split(topic)
+```
+
+## Running Word2Vec
+
+The most advanced NLP method we will cover today is a Word2Vec model. Such a model encodes co-occurrence patterns of words in so-called word embeddings, vectors of numbers with 50, 100, 200, or 300 dimensions.
+
+#HE: Here is again gensim library, instead of the R one
+Here, you will write the least code since we will be using the `word2vec` library to run Word2Vec. Despite it being the (mathematically) most complex model, it can be run very fast and efficiently.
+
+### Exercise 9: Run Word2Vec
+
+#HE: ditto
+Below, write code that uses `word2vec` and run it on our corpus.
+
+Train two models, one with a `window size` of 5, and one with 30.
+
+```{r}
+library(word2vec)
+
+tokenized_speeches <- 
+  speeches() |> 
+  tokenize_speech() |>
+  summarise(tokens = paste(tokens, collapse = " "), .by = id) |>
+  getElement("tokens")
+
+#word2vec accepts a character vector as input.
+w2v_5 = word2vec(tokenized_speeches, window = 5)
+w2v_30 = word2vec(tokenized_speeches, window = 30)
+
+#HE: That's a nice addition, very cool!
+# write.word2vec(w2v_5, "w2v_5.bin") # save model
+# model <- read.word2vec("w2v_5.bin") # read in model
+```
+
+### Exercise 10: Analyze the word embeddings
+
+As a last exercise for today, here we analyze the word embeddings. Word embeddings are very good to find out what words are related to others. You can check so by utilizing `predict(..., newdata = c("some", "words"), type = "nearest")`.
+
+> Below, print out the most similar words for `america`, `government`, `bank`, and `war` for both models.
+
+```{r}
+words <- c("america", "government", "bank", "war")
+predict(w2v_5, newdata = words, type = "nearest")
+
+predict(w2v_30, newdata = words, type = "nearest")
+```
+
+
+## Conclusion
+
+This concludes today's introduction into text analysis methods. Notice how we produced almost no plots: These methods are all great for getting a bearing on some corpus. Once you have found some interesting patterns, it is time to throw the results of one or more of the above methods into a model and test hypotheses with it.
+
+Regardless of whether you have used the provided corpus, or your own: Try to come up with some research questions over the afternoon that you could check. Maybe this leads to a great project idea?
+
+#HE: Add your own info here as well! :)
+If you have further questions regarding these methods, do not hesitate to send me a mail to <hendrik.erz@liu.se> or ping me on Twitter <https://twitter.com/sahiralsaid>!
+
