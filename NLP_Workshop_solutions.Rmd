@@ -75,8 +75,7 @@ library(data.table)
 speeches <- function(n_speeches = 251) {
   #data.table::fread allows quick reading of large tsv
   data <- fread("sotu.tsv", sep = "\t", nrows = n_speeches)
-  #data <- #Use data.table::fread(...), check ?fread.
-  
+
   #Tibble (tidyverse's data.frame format) is nicer because it trims columns
   #This is useful here because speeches are super long and we don't want to output all at once when
   #we want to take a look at the data.
@@ -315,7 +314,7 @@ build_dtm_from_scratch <- function(.data, document = "id", term = "tokens"){
 }
 
 #Try with 4 documents: already long!! Not optimized at all.
-dtm_scratch <- build_dtm_from_scratch(words %>% filter(id %in% 1:4))
+dtm_scratch <- build_dtm_from_scratch(tokens_df %>% filter(id %in% 1:4))
 dtm_scratch[1:4, 1:4]
 ```
 
@@ -325,7 +324,7 @@ Below, write a function that trains a topic model. I have already added the corr
 
 Since we are dealing with a small corpus, let us just set $K = 10$. However, you still need to figure out a good alpha and a good beta. Beta should normally be larger than alpha, and both should be smaller than 0.5. Feel free to run the model several times while doing exercise 6 to figure out good values.
 
-Hint: use `topicmodels::LDA` function.
+Hint: use `topicmodels::LDA` function, which takes up the DTM as argument.
 
 ```{r}
 library(topicmodels)
@@ -384,6 +383,8 @@ Additionally, while all the methods we have looked at so far are based on the as
 Below, write code that uses `word2vec` and run it on our corpus.
 
 Train two models, one with a window size of 5, and one with 30.
+
+Use the `word2vec` function to do this. Careful: you should use a character vector of tokenized speeches as input. To make it simpler, I've done that for you: use `w2v_data`.
 
 ```{r}
 library(word2vec)
